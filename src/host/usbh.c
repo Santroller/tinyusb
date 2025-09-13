@@ -1482,10 +1482,16 @@ static void process_enumeration(tuh_xfer_t* xfer) {
       tusb_time_delay_ms_api(ATTEMPT_DELAY_MS); // delay a bit
       TU_LOG_USBH("Enumeration attempt %u/%u\r\n", failed_count+1, ATTEMPT_COUNT_MAX);
       retry = tuh_control_xfer(xfer);
-    }
-
-    if (!retry) {
-      enum_full_complete(); // complete as failed
+    } else {
+      tuh_bus_info_t* dev0_bus = &_usbh_data.dev0_bus;
+      // enum_full_complete(); // complete as failed
+      hcd_port_reset(dev0_bus->rhport);
+      tusb_time_delay_ms_api(ENUM_RESET_ROOT_DELAY_MS);
+      hcd_port_reset_end(dev0_bus->rhport);
+      tusb_time_delay_ms_api(ATTEMPT_DELAY_MS); // delay a bit
+      TU_LOG_USBH("Enumeration attempt %u/%u\r\n", failed_count+1, ATTEMPT_COUNT_MAX);
+      retry = tuh_control_xfer(xfer);
+      failed_count = 0;
     }
     return;
   }
