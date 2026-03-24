@@ -629,6 +629,7 @@ bool tud_deinit(uint8_t rhport) {
     tud_umount_cb();
   }
 
+  critical_section_deinit(&_usbd_spin);
   return true;
 }
 
