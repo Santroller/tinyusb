@@ -846,7 +846,7 @@ bool tuh_control_xfer (tuh_xfer_t* xfer) {
 
     TU_ASSERT(usbh_setup_send(daddr, (uint8_t const *) &_usbh_epbuf.request));
 
-    long start = to_us_since_boot(get_absolute_time());
+    uint64_t start = to_us_since_boot(get_absolute_time());
     while (result == XFER_RESULT_INVALID && (to_us_since_boot(get_absolute_time()) - start) < 1000*100) {
       // Note: this can be called within an callback ie. part of tuh_task()
       // therefore even with RTOS tuh_task_ext() still need to be invoked
