@@ -404,6 +404,7 @@ bool dcd_deinit(uint8_t rhport) {
   // reset usb hardware into initial state
   reset_block(RESETS_RESET_USBCTRL_BITS);
   unreset_block_wait(RESETS_RESET_USBCTRL_BITS);
+  rp2usb_deinit();
 
   return true;
 }
