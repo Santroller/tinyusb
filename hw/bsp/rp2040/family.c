@@ -165,7 +165,11 @@ void board_init(void)
 {
 #if (CFG_TUH_ENABLED && CFG_TUH_RPI_PIO_USB) || (CFG_TUD_ENABLED && CFG_TUD_RPI_PIO_USB)
   // Set the system clock to a multiple of 12mhz for bit-banging USB with pico-usb
-  set_sys_clock_khz(120000, true);
+  #if defined(PICO_RP2350) && PICO_RP2350 == 1
+  set_sys_clock_khz(156000, true); // rp2350 default is 150Mhz
+  #else
+  set_sys_clock_khz(120000, true); // rp2040 default is 125Mhz
+  #endif
   // set_sys_clock_khz(180000, true);
   // set_sys_clock_khz(192000, true);
   // set_sys_clock_khz(240000, true);
@@ -269,11 +273,13 @@ int board_uart_read(uint8_t *buf, int len) {
 
 int board_uart_write(void const *buf, int len) {
 #ifdef UART_DEV
-  char const *bufch = (char const *) buf;
-  for ( int i = 0; i < len; i++ ) {
-    uart_putc(uart_inst, bufch[i]);
+  const uint8_t *p = (const uint8_t *) buf;
+  int count = 0;
+  while (count < len && uart_is_writable(uart_inst)) {
+    uart_putc_raw(uart_inst, p[count]);
+    count++;
   }
-  return len;
+  return count;
 #else
   (void) buf; (void) len;
   return 0;
@@ -284,8 +290,8 @@ int board_getchar(void) {
   return getchar_timeout_us(0);
 }
 
-void board_putchar(int c) {
-  stdio_putchar(c);
+int board_putchar(int c) {
+  return stdio_putchar(c);
 }
 
 void board_init_after_tusb(void) {
