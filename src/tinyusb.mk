@@ -3,7 +3,6 @@ TINYUSB_SRC_C += \
 	src/tusb.c \
 	src/common/tusb_fifo.c \
 	src/device/usbd.c \
-	src/device/usbd_control.c \
 	src/typec/usbc.c \
 	src/class/audio/audio_device.c \
 	src/class/cdc/cdc_device.c \
@@ -26,4 +25,3 @@ TINYUSB_SRC_C += \
   src/class/midi/midi_host.c \
   src/class/msc/msc_host.c \
   src/class/vendor/vendor_host.c \
-  src/typec/usbc.c \

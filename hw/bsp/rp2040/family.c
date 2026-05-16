@@ -282,7 +282,7 @@ int board_uart_write(void const *buf, int len) {
   return count;
 #else
   (void) buf; (void) len;
-  return 0;
+  return -1;
 #endif
 }
 
@@ -297,6 +297,20 @@ int board_putchar(int c) {
 void board_init_after_tusb(void) {
   // nothing to do
 }
+
+//--------------------------------------------------------------------+
+// FreeRTOS hooks
+//--------------------------------------------------------------------+
+#if CFG_TUSB_OS == OPT_OS_FREERTOS
+#include "FreeRTOS.h"
+#include "task.h"
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+  (void) xTask;
+  (void) pcTaskName;
+  panic("FreeRTOS stack overflow: %s", pcTaskName);
+}
+#endif
 
 void board_reset_to_bootloader(void) {
   // not implemented
