@@ -585,6 +585,8 @@ bool tuh_deinit(uint8_t rhport) {
       }
     }
 
+    osal_spin_deinit(&_usbh_spin);
+
     osal_queue_delete(_usbh_q);
     _usbh_q = NULL;
 
