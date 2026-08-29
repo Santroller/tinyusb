@@ -1421,6 +1421,12 @@ TU_ATTR_FAST_FUNC void dcd_event_handler(dcd_event_t const* event, bool in_isr) 
         send = true;
       }
       break;
+    case DCD_EVENT_BUS_RESET:
+      // skip event if not connected
+      if (_usbd_dev.connected) {
+        send = true;
+      }
+      break;
 
     case DCD_EVENT_RESUME:
       // skip event if not connected (especially required for SAMD)
