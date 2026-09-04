@@ -57,6 +57,15 @@ bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
   return true;
 }
 
+bool hcd_deinit(uint8_t rhport) {
+  (void) rhport;
+
+  // must release the alarm pool/hardware alarm claimed by hcd_init, otherwise re-init leaks a hw alarm
+  pio_usb_host_deinit();
+
+  return true;
+}
+
 void hcd_port_reset(uint8_t rhport) {
   uint8_t const pio_rhport = RHPORT_PIO(rhport);
   pio_usb_host_port_reset_start(pio_rhport);
