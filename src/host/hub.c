@@ -24,6 +24,7 @@
 typedef struct {
   uint8_t itf_num;
   uint8_t ep_in;
+  bool status_poll_paused;
 
   // from hub descriptor
   uint8_t bNbrPorts;
@@ -250,6 +251,7 @@ bool hub_edpt_status_xfer(uint8_t daddr) {
   hub_interface_t* p_hub = get_hub_itf(daddr);
   hub_epbuf_t* p_epbuf = get_hub_epbuf(daddr);
 
+  TU_VERIFY(!p_hub->status_poll_paused);
   TU_VERIFY(usbh_edpt_claim(daddr, p_hub->ep_in));
   if (!usbh_edpt_xfer(daddr, p_hub->ep_in, p_epbuf->status_change, 1)) {
     usbh_edpt_release(daddr, p_hub->ep_in);
@@ -257,6 +259,25 @@ bool hub_edpt_status_xfer(uint8_t daddr) {
   }
 
   return true;
+}
+
+bool hub_status_poll_pause(uint8_t daddr) {
+  hub_interface_t* p_hub = get_hub_itf(daddr);
+  TU_VERIFY(p_hub->ep_in);
+
+  p_hub->status_poll_paused = true;
+  if (usbh_edpt_busy(daddr, p_hub->ep_in)) {
+    tuh_edpt_abort_xfer(daddr, p_hub->ep_in);
+  }
+  return true;
+}
+
+bool hub_status_poll_resume(uint8_t daddr) {
+  hub_interface_t* p_hub = get_hub_itf(daddr);
+  TU_VERIFY(p_hub->ep_in);
+
+  p_hub->status_poll_paused = false;
+  return usbh_edpt_busy(daddr, p_hub->ep_in) || hub_edpt_status_xfer(daddr);
 }
 
 //--------------------------------------------------------------------+
@@ -363,10 +384,14 @@ bool hub_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t result, uint32_t 
   (void) xferred_bytes;
   (void) ep_addr;
 
+  hub_interface_t* p_hub = get_hub_itf(daddr);
+  if (p_hub->status_poll_paused) {
+    return true;
+  }
+
   bool processed = false; // true if new status is processed
 
   if (result == XFER_RESULT_SUCCESS) {
-    hub_interface_t* p_hub = get_hub_itf(daddr);
     hub_epbuf_t *p_epbuf = get_hub_epbuf(daddr);
     const uint8_t status_change = p_epbuf->status_change[0];
     TU_LOG_DRV("  Hub Status Change = 0x%02X\r\n", status_change);

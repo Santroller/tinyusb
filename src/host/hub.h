@@ -167,6 +167,8 @@ bool hub_port_get_status_local(uint8_t hub_addr, uint8_t hub_port, hub_port_stat
 
 // Get status from Interrupt endpoint
 bool hub_edpt_status_xfer(uint8_t daddr);
+bool hub_status_poll_pause(uint8_t daddr);
+bool hub_status_poll_resume(uint8_t daddr);
 
 // Reset a port
 TU_ATTR_ALWAYS_INLINE static inline

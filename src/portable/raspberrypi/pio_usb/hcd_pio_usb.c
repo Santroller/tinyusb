@@ -158,11 +158,8 @@ bool hcd_setup_send(uint8_t rhport, uint8_t dev_addr, uint8_t const setup_packet
 //}
 
 bool hcd_edpt_clear_stall(uint8_t rhport, uint8_t dev_addr, uint8_t ep_addr) {
-  (void) rhport;
-  (void) dev_addr;
-  (void) ep_addr;
-
-  return true;
+  uint8_t const pio_rhport = RHPORT_PIO(rhport);
+  return pio_usb_host_endpoint_clear_stall(pio_rhport, dev_addr, ep_addr);
 }
 
 static void __no_inline_not_in_flash_func(handle_endpoint_irq)(root_port_t *rport, xfer_result_t result,
