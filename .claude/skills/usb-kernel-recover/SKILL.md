@@ -50,40 +50,57 @@ grep -l <SERIAL> /sys/bus/usb/devices/*/serial    # only on a HEALTHY device
 
 ## 2. Shield first (prerequisite for anything using libusb)
 
+Repository paths in the commands below are relative to the checkout root.
+
 A wedged device blocks every enumerator that reads its locking attributes —
 JLinkExe, uhubctl, openocd's HID fallback. `chmod 000` makes the VFS reject the
-read before `->show()` runs, so they skip it and keep enumerating:
+read before `->show()` runs, so they skip it and keep enumerating. `chmod` never
+blocks (inode setattr, no `show()`), so it works on a fully wedged device.
 
 ```bash
-for f in bNumInterfaces bmAttributes bMaxPower configuration bConfigurationValue \
-         product manufacturer serial avoid_reset_quirk; do
-  sudo chmod 000 /sys/bus/usb/devices/<busport>/$f
-done
+sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh shield <busport> $$    # leaf + parent hub + root hub, modes recorded first
+sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh shield-status          # who holds what, owner alive/dead, what re-enumerated
+sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh unshield <busport> $$  # restore the recorded modes; the owner pid, or none once it is dead
 ```
 
-- Shield the **leaf, its parent hub, and the root hub** (`usb<N>`) — a stuck
-  uhubctl locks the root hub too.
+- The owner pid is the recovery session (your shell, the orchestrating process),
+  not the short-lived `sudo`: a stale shield is one whose owner is gone, and
+  `shield-status` says so. Never unshield blindly; a live foreign owner is refused.
+- The root hub is shared, so a second shield touching it is refused: finish or
+  unshield the first one.
 - **Run the recovery tool as NON-root**: root has `CAP_DAC_OVERRIDE`, ignores the
   `000`, and blocks anyway.
-- **Only those nine.** `descriptors`, `busnum`, `devnum`, `speed`, `idVendor`,
-  `idProduct` are lock-free and libusb needs them; a blanket `chmod` breaks
-  enumeration instead of fixing it.
-- `chmod` never blocks (inode setattr, no `show()`), so it works on a fully
-  wedged device.
-- **Not needed for openocd pinned with `vid_pid`** — it matches the cached
-  descriptor and skips a foreign device before `libusb_open`
-  (cmsis_dap_usb_bulk.c:107, bulk backend; the HID fallback ignores the pin).
-- Leaf shields vanish on re-enumeration; **the root hub's must be restored**:
-  `sudo chmod "$(stat -c %a /sys/bus/usb/devices/usb<healthy>/$f)" …/usb<N>/$f`
+- Leaf shields vanish on re-enumeration (new kobject, new inodes); `unshield`
+  restores only the surviving originals and reports the rest as gone. It never
+  copies modes from a sibling: two of the nine are 644 where the rest are 444.
+- **JLinkExe always needs it**, even with `-USB`/`-SelectEmuBySN`: to find its probe
+  it reads `product`, `serial` and `bNumInterfaces` of every USB device on the host
+  (strace, ci.lan 2026-09-21), and those are served under each device's lock.
+- **Not needed for openocd pinned with `vid_pid`**, over `interface/jlink.cfg`, or
+  for `STM32_Programmer_CLI` (`hil_flash.convoy_safe`) — those skip a foreign device
+  before `libusb_open` and read no other device's locking attributes.
 
 ## 3. The rungs — go straight to the one triage names
 
-**Rung 1 — wedged DUT: reset it through its own probe.**
+**Rung 1 — wedged DUT: reset it through its own probe.** Resolve the board's
+recovery flasher from the HIL roster, its `flasher_recover` or else its primary
+`flasher` (`hil_flash.recover_flasher`; `<probe-sn>` is the primary's `uid` either way). A convoy-safe one (`hil_flash.convoy_safe`,
+section 2) needs no shield; for openocd:
 
 ```bash
+openocd -c "adapter serial <probe-sn>" <flasher args> -c "init; reset run; shutdown"
+```
+
+For stlink: `STM32_Programmer_CLI --connect port=swd sn=<probe-sn> --rst --go`.
+
+Any other runs only behind the shield (section 2), then unshield; for JLink:
+
+```bash
+sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh shield <busport> $$
 printf "r\ng\nq\n" > /tmp/rec.jlink
 JLinkExe -device <DEV> -if SWD -speed 4000 -SelectEmuBySN <probe-sn> \
          -autoconnect 1 -nogui 1 -CommandFile /tmp/rec.jlink
+sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh unshield <busport> $$
 ```
 
 Reset **before** park-flash: non-destructive (the firmware under test survives
@@ -101,8 +118,8 @@ DWC2** — measured 2026-08-16 on stm32f407disco: `r; g` gave
 
 **Park-flash** (`--recover-board`/`--recover-fw`, what `usbtest.py` automates) is
 the fallback where the reset cannot reach the peripheral. Delivery must be
-convoy-safe: **openocd pinned with `vid_pid`**, or esptool (`-p <ttyACM>`).
-JLinkExe selects by serial, which needs `libusb_open`, so it needs the shield.
+convoy-safe: **openocd pinned with `vid_pid`** or over `interface/jlink.cfg`,
+`STM32_Programmer_CLI`, or esptool (`-p <ttyACM>`). JLinkExe needs the shield (section 2).
 
 **Rung 2 — wedged PROBE: `root-cycle`.** A probe has no probe to reset it, so the
 port-side drop is the only lever left that avoids the KERNEL device lock. It
@@ -153,21 +170,19 @@ as opposed to ONE device wedged. The rungs above cannot help; the controller
 itself needs re-initialising.
 
 ```bash
-sudo usb_recover.sh pci-rebind <pciaddr>     # unbind + bind the whole xHCI
-sudo usb_recover.sh pci-bind   <pciaddr>     # only if it ends up driverless
+sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh pci-rebind <pciaddr>  # unbind + bind the whole xHCI
+sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh pci-bind   <pciaddr>  # only if it ends up driverless
 ```
 
-Measured on ci.lan 2026-08-17 02:34:41 after a `hub-cycle` failed to take: unbind
-deregistered buses 17 and 18, the re-bind registered new buses **1 and 2** one
-second later, and every fixture re-enumerated. **It renumbers every bus that
-controller owns**, so hold all affected boards' locks first (`hil_lock.py hold
---all`) and re-derive busports afterwards.
+On a successful rebind every fixture re-enumerates, and **it renumbers every bus that
+controller owns** (buses 17 and 18 came back as 1 and 2 on ci.lan, 2026-08-17), so take
+the rig-wide hold as in rung 2 before the rebind, release it after, and re-derive busports.
 
 Do NOT reach for it while a device-lock convoy is live — see Common mistakes.
 
 ## 4. If nothing is in D state
 
-The device is dead or silent, not wedged. `sudo usb_recover.sh authorized
+The device is dead or silent, not wedged. `sudo .claude/skills/usb-kernel-recover/scripts/usb_recover.sh authorized
 <busport>` unconfigures and reconfigures it (`usb_set_configuration(dev, -1)`
 then re-choose, hub.c) — it fixes stale driver/interface state, does **not**
 replug: the `usb_device` survives, so most probes keep their sysfs node. If that
@@ -218,12 +233,12 @@ Observed: 5 boards missing with a completely clean D-state list, because
 ## Rig layout (ci.lan, bus numbers renumber every boot)
 
 `readlink -f /sys/bus/usb/devices/usb<N>` → its PCI address; `sudo uhubctl` lists
-the root hubs it can drive, against their PCI address. Five Renesas uPD720201 cards
-— `0000:01:00.0`, `03`, `04`, `05`, `06:00.0` — advertise per-port `ppps` on both
-their USB2 and USB3 root hubs, **but do not implement it**: the silicon never drops
-VBUS, so a cycle re-enumerates the port and nothing more (above). Do not read
-`uhubctl`'s `ppps` as power control on this rig. AMD `0000:02:00.0` does not appear
-in `uhubctl` at all — no switching of any kind. Which tree holds which probes moves
-with re-cabling, so derive it (`lsusb -s <bus>:`) rather than trusting a stored map.
-Verified 2026-08-18; `sudo` is passwordless for `hathach` here, so every rung above
-runs without a prompt.
+the root hubs it can drive, against their PCI address. Eight Renesas uPD720201
+controllers — `0000:01:00.0` to `0000:08:00.0`, on two cards — advertise per-port
+`ppps` on both their USB2 and USB3 root hubs, **but do not implement it**: the
+silicon never drops VBUS (measured on the `05`–`08` card; `01`–`04` is unmeasured,
+assume the same), so a cycle re-enumerates the port and nothing more (above). Do not
+read `uhubctl`'s `ppps` as power control on this rig. Which tree holds which probes
+moves with re-cabling, so derive it (`lsusb -s <bus>:`) rather than trusting a
+stored map. Verified 2026-09-22; `sudo` is passwordless for `hathach` here, so every
+rung above runs without a prompt.

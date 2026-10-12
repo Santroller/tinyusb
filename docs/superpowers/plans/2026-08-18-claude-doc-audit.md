@@ -1,5 +1,7 @@
 # `.claude/` Instruction-Surface Audit Implementation Plan
 
+> Deferred-work instructions below describe the original file-based workflow. Follow CLAUDE.md instead: create a GitHub issue labeled `followup`, preserve the full handoff in its body, and add revalidation and new findings as comments.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give every falsifiable claim in the 4,689-line `.claude/` + `CLAUDE.md` instruction surface a verdict backed by a citation, correct the ones current source refutes, and remove duplication without deleting hard-earned rig knowledge.
@@ -7,8 +9,6 @@
 **Architecture:** Claims are extracted by parallel subagents into machine-checkable JSONL ledgers, then verified by the main session — never by the extractor that found them. Two validators make "trust nothing without source" mechanical rather than aspirational: one asserts every extracted claim's verbatim text really appears where the ledger says it does, the other asserts every verdict's citation really contains the code it cites. Edits happen only after verification, committed one surface at a time.
 
 **Tech Stack:** Python 3 (validators, stdlib only), bash (mechanical scans), `ssh ci.lan` read-only probes, the repo's existing gates (`.claude/workflows/check.sh`, `test/hil/test/test_*.py`, `pre-commit`).
-
-**Spec:** `docs/superpowers/specs/2026-08-18-claude-doc-audit-design.md`
 
 ## Status (2026-08-18, end of session)
 

@@ -20,15 +20,12 @@ deps_mandatory = {
     'lib/threadx': ['https://github.com/eclipse-threadx/threadx.git',
                     '4b6e8100d932a3a67b34c6eb17f84f3bffb9e2ae',
                     'all'],
-    'tools/linkermap': ['https://github.com/hathach/linkermap.git',
-                        '8e1f440fa15c567aceb5aa0d14f6d18c329cc67f',
-                        'all'],
     'tools/uf2': ['https://github.com/microsoft/uf2.git',
                   'c594542b2faa01cc33a2b97c9fbebc38549df80a',
                   'all'],
 }
 
-# Optional Dependencies per MCU
+# Optional Dependencies per family, or fetched by path
 # path, url, commit, family (Alphabet sorted by path)
 deps_optional = {
     'hw/mcu/allwinner': ['https://github.com/hathach/allwinner_driver.git',
@@ -265,6 +262,9 @@ deps_optional = {
     'hw/mcu/wch/ch583': ['https://github.com/openwch/ch583.git',
                          'bd508ad7ceed48377619837051412a651952857f',
                          'ch583'],
+    'hw/mcu/wch/ch32x035': ['https://github.com/openwch/ch32x035.git',
+                            'c6253942b29ff2a3f5e2829182a874afffa45881',
+                            'ch32x035'],
     'hw/mcu/artery/at32f403a_407': ['https://github.com/ArteryTek/AT32F403A_407_Firmware_Library.git',
                                     'f2cb360c3d28fada76b374308b8c4c61d37a090b',
                                     'at32f403a_407'],
@@ -299,13 +299,17 @@ deps_optional = {
                     'stm32c0 stm32f0 stm32f1 stm32f2 stm32f3 stm32f4 stm32f7 stm32g0 stm32g4 stm32h5 '
                     'stm32h7 stm32h7rs stm32l0 stm32l1 stm32l4 stm32l5 stm32u0 stm32u5 stm32wb stm32wba '
                     'sam3x samd11 samd21 samd2x_l2x samd51 samd5x_e5x same5x same7x samg '
-                    'tm4c '],
+                    'tm4c efm32'],
     'lib/CMSIS_6': ['https://github.com/ARM-software/CMSIS_6.git',
                     '6f0a58d01aa9bd2feba212097f9afe7acd991d52',
                     'imxrt kinetis_k32l ra stm32n6 lpc51 lpc55 mcx stm32c5'],
     'lib/sct_neopixel': ['https://github.com/gsteiert/sct_neopixel.git',
                          'e73e04ca63495672d955f9268e003cffe168fcd8',
                          'lpc55'],
+    # local size tooling only (tools/code_size.py, <ex>-linkermap): no family builds with it
+    'tools/linkermap': ['https://github.com/hathach/linkermap.git',
+                        '89b42dd5b6e5d1874769fb74e2d7b557a225213c',
+                        ''],
 }
 
 # Files to remove after cloning to avoid conflicts with TinyUSB's custom versions
@@ -318,6 +322,29 @@ deps_all = {**deps_mandatory, **deps_optional}
 
 # TOP is tinyusb root dir
 TOP = Path(__file__).parent.parent.resolve()
+DEPS_RST = TOP / 'docs/reference/dependencies.rst'
+
+
+def rst_table(headers, rows):
+    """Sphinx simple table: columns two spaces apart, header at least two wider than its text."""
+    rows = [[c.strip() for c in r] for r in rows]
+    widths = [max([len(h) + 2] + [len(r[i]) for r in rows]) for i, h in enumerate(headers)]
+    rule = '  '.join('=' * w for w in widths)
+    line = lambda cells: '  '.join(c.ljust(w) for c, w in zip(cells, widths)).rstrip()
+    return '\n'.join([rule, line(headers), rule, *(line(r) for r in rows), rule])
+
+
+def gen_doc(path=DEPS_RST):
+    rows = [[d, url, commit, families] for d, (url, commit, families) in sorted(deps_all.items())]
+    Path(path).write_text(f"""\
+************
+Dependencies
+************
+
+MCU low-level peripheral drivers and external libraries for building TinyUSB examples
+
+{rst_table(['Local Path', 'Repo', 'Commit', 'Required by'], rows)}
+""")
 
 
 def run_cmd(cmd):
@@ -380,7 +407,8 @@ def find_family(board):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('families', nargs='*', default=[], help='Families to fetch')
+    parser.add_argument('families', nargs='*', default=[],
+                        help='Families, or optional dependency paths (e.g. tools/linkermap), to fetch')
     parser.add_argument('-b', '--board', action='append', default=[], help='Boards to fetch')
     parser.add_argument('-D', '--define', action='append', default=[], help='Have no effect')
     parser.add_argument('-f1', '--build-flags-on', action='append', default=[], help='Have no effect')
@@ -390,7 +418,14 @@ def main():
     # verbatim (.github/actions/get_deps, build.yml's hil-hfp-iar) and an
     # argparse error here reds the Get Dependencies step of every scoped PR
     parser.add_argument('-e', '--example', action='append', default=[], help='Have no effect')
+    parser.add_argument('--gen-doc', nargs='?', const=DEPS_RST, metavar='RST',
+                        help=f'write the dependency table for the docs ({DEPS_RST.relative_to(TOP)}) and exit, fetching nothing')
     args = parser.parse_args()
+
+    if args.gen_doc:
+        gen_doc(args.gen_doc)
+        print(f'wrote {args.gen_doc}')
+        return 0
 
     families = args.families
     boards = args.board
@@ -408,6 +443,13 @@ def main():
                 if f is not None:
                     families.append(f)
         for f in families:
+            if '/' in f:  # a dependency path rather than a family
+                if f not in deps_all:
+                    print(f'ERROR: {f} is not in the dependency list')
+                    return 1
+                if f in deps_optional and f not in deps:
+                    deps.append(f)
+                continue
             for d in deps_optional:
                 if d not in deps and f in deps_optional[d][2].split():
                     deps.append(d)
