@@ -220,6 +220,7 @@ typedef struct {
   uint8_t direct_daddr;       // address retained during post-reset verification
   uint16_t direct_config_len;  // cached configuration length for post-reset verification
   uint8_t hub_enum_retry_count;
+  uint8_t root_enum_retry_count; // in-place retries for a failed enumeration on a roothub port
   usbh_ctrl_xfer_info_t ctrl_xfer_info; // control transfer
   usbh_call_after_t call_after;
   // Per-daddr generation counter — bumped on usbh_device_close() to identify stale pending control transfer
@@ -1911,6 +1912,7 @@ static void enum_new_device(hcd_event_t *event) {
   _usbh_data.direct_daddr = 0;
   _usbh_data.direct_config_len = 0;
   _usbh_data.hub_enum_retry_count = 0;
+  _usbh_data.root_enum_retry_count = 0;
   tuh_bus_info_t *dev0_bus = &_usbh_data.dev0_bus;
   dev0_bus->rhport         = event->rhport;
   dev0_bus->hub_addr       = event->connection.hub_addr;
@@ -2488,9 +2490,24 @@ static void enum_full_complete(bool success) {
   }
   #endif
 
+  // Same problem on a roothub port: the hcd only raises attach on a disconnected -> connected
+  // transition, so a device that is still plugged in after a failed enumeration would sit there
+  // unenumerated until it is physically replugged. Start over with a fresh debounce + port reset.
+  if (!success && _usbh_data.dev0_bus.hub_addr == 0 && !_usbh_data.direct_daddr &&
+      _usbh_data.root_enum_retry_count < 3 && hcd_port_connect_status(_usbh_data.dev0_bus.rhport)) {
+    enum_teardown(false);
+    _usbh_data.root_enum_retry_count++;
+    TU_LOG_USBH("Roothub enumeration failed, retrying %u/3\r\n", _usbh_data.root_enum_retry_count);
+    _usbh_data.enum_attempt = 0;
+    _usbh_data.enumerating_daddr = 0;
+    usbh_defer_func_ms_async(ENUM_DEBOUNCING_DELAY_MS, enum_delay_async, ENUM_AFTER_DEBOUNCING_DELAY);
+    return;
+  }
+
   _usbh_data.direct_daddr = 0;
   _usbh_data.direct_config_len = 0;
   _usbh_data.hub_enum_retry_count = 0;
+  _usbh_data.root_enum_retry_count = 0;
   enum_teardown(success);
 
   #if CFG_TUH_HUB
