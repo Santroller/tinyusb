@@ -1656,19 +1656,28 @@ bool tuh_interface_set(uint8_t daddr, uint8_t itf_num, uint8_t itf_alt,
 
 // process detach event from rhport:hub_addr:hub_port
 static void process_remove_event(hcd_event_t *event) {
-  if (_usbh_data.enumerating_daddr == 0 &&
-      event->rhport == _usbh_data.dev0_bus.rhport &&
-      event->connection.hub_addr == _usbh_data.dev0_bus.hub_addr &&
-      event->connection.hub_port == _usbh_data.dev0_bus.hub_port) {
+  const tuh_bus_info_t *dev0_bus = &_usbh_data.dev0_bus;
+  const bool dev0_enumerating = (_usbh_data.enumerating_daddr == 0) && (event->rhport == dev0_bus->rhport);
+
+  if (dev0_enumerating &&
+      event->connection.hub_addr == dev0_bus->hub_addr &&
+      event->connection.hub_port == dev0_bus->hub_port) {
     // dev0 is unplugged while enumerating (not yet assigned an address)
     const bool direct_reenumeration = _usbh_data.direct_daddr != 0;
-    usbh_device_close(_usbh_data.dev0_bus.rhport, 0);
+    usbh_device_close(dev0_bus->rhport, 0);
     if (direct_reenumeration) {
       remove_device_tree(event->rhport, event->connection.hub_addr, event->connection.hub_port);
     }
-  } else {
-    remove_device_tree(event->rhport, event->connection.hub_addr, event->connection.hub_port);
+    return;
   }
+
+  // hub_addr = 0 is the whole roothub port: dev0 goes with it even if it sits behind a downstream
+  // hub. Without this, enumerating_daddr stays 0 forever and every later attach is deferred.
+  if (dev0_enumerating && event->connection.hub_addr == 0 && event->connection.hub_port == 0) {
+    usbh_device_close(dev0_bus->rhport, 0);
+  }
+
+  remove_device_tree(event->rhport, event->connection.hub_addr, event->connection.hub_port);
 }
 
 // remove a device at rhport:hub_addr:hub_port and all of its downstream
@@ -2464,7 +2473,10 @@ static void enum_full_complete(bool success) {
   #if CFG_TUH_HUB
   const bool hub_poll_deferred =
       _usbh_data.direct_config_len || _usbh_data.hub_enum_retry_count;
-  const bool hub_enumeration_failed = !success && _usbh_data.dev0_bus.hub_addr != 0;
+  // An unplug can invalidate the enumeration before its failure arrives here, and a retry would
+  // then revive it (enumerating_daddr = 0) for a device that is gone.
+  const bool hub_enumeration_failed = !success && _usbh_data.dev0_bus.hub_addr != 0 &&
+                                      _usbh_data.enumerating_daddr != TUSB_INDEX_INVALID_8;
   const bool direct_verification_failed = hub_enumeration_failed && _usbh_data.direct_config_len;
   const bool retry_hub_enumeration =
       hub_enumeration_failed && _usbh_data.hub_enum_retry_count < 2;
@@ -2494,6 +2506,7 @@ static void enum_full_complete(bool success) {
   // transition, so a device that is still plugged in after a failed enumeration would sit there
   // unenumerated until it is physically replugged. Start over with a fresh debounce + port reset.
   if (!success && _usbh_data.dev0_bus.hub_addr == 0 && !_usbh_data.direct_daddr &&
+      _usbh_data.enumerating_daddr != TUSB_INDEX_INVALID_8 &&
       _usbh_data.root_enum_retry_count < 3 && hcd_port_connect_status(_usbh_data.dev0_bus.rhport)) {
     enum_teardown(false);
     _usbh_data.root_enum_retry_count++;
